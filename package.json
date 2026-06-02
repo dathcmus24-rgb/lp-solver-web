@@ -1,0 +1,43 @@
+{
+  "name": "lp-solver-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test:solver": "node scripts/run-solver-tests.cjs",
+    "test:flows": "tsx scripts/run-method-flow-tests.ts",
+    "test:examples": "tsx scripts/run-example-tests.ts",
+    "test:warnings": "tsx scripts/run-method-warning-tests.ts",
+    "test:summary": "tsx scripts/run-summary-tests.ts"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@vitejs/plugin-react": "latest",
+    "d3-array": "latest",
+    "d3-scale": "latest",
+    "d3-shape": "latest",
+    "framer-motion": "latest",
+    "katex": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-katex": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/d3-array": "latest",
+    "@types/d3-scale": "latest",
+    "@types/d3-shape": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "autoprefixer": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "tsx": "^4.19.2"
+  },
+  "test:examples": "tsx scripts/run-example-tests.ts"
+}
