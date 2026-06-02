@@ -236,11 +236,13 @@ export function parseLPText(text: string): ParseResult {
     warnings.push('Variables without explicit conditions are treated as x_i >= 0.');
   }
 
+  const parsedObjective = objective as { optimization: OptimizationType; coeffs: LinearMap };
+
   const input: LPInput = {
-    optimization: objective.optimization,
+    optimization: parsedObjective.optimization,
     n: maxVar,
     m: constraints.length,
-    c: toVector(objective.coeffs, maxVar),
+    c: toVector(parsedObjective.coeffs, maxVar),
     A: constraints.map((constraint) => toVector(constraint.coeffs, maxVar)),
     signs: constraints.map((constraint) => constraint.sign),
     b: constraints.map((constraint) => constraint.rhs),

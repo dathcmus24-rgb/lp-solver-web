@@ -1,8 +1,7 @@
-import type { ConstraintRow, SimplexResult, SolveMethod, StandardModel, TableauStep } from './types';
+import type { ConstraintRow, SimplexResult, SolveDiagnostics, SolveMethod, StandardModel, TableauStep } from './types';
 import { cleanNumber, cloneMatrix, EPS, nearlyZero } from './format';
 import { recoverOriginalSolution, standardize } from './standardize';
 import { solveGeometric } from './geometry';
-import { analyzeTwoPhaseX0 } from './twoPhaseX0';
 
 interface TableauState {
   tableau: number[][];
@@ -10,6 +9,15 @@ interface TableauState {
   variableNames: string[];
   originalVariableCount: number;
   artificial: Set<number>;
+}
+
+
+function makeDiagnostics(isDegenerate = false, hasAlternateOptimum = false): SolveDiagnostics {
+  return {
+    isDegenerate,
+    hasAlternateOptimum,
+    isCyclingRisk: isDegenerate && hasAlternateOptimum,
+  };
 }
 
 function objectiveValue(tableau: number[][]): number {
@@ -133,14 +141,10 @@ function runSimplexLoop(
     const reducedCostBefore = state.tableau[0][entering];
     const pv = state.tableau[leaving][entering];
     const leavingBefore = state.basis[leaving - 1];
+    pivot(state.tableau, state.basis, leaving, entering);
     const enteringName = state.variableNames[entering] ?? `x${entering + 1}`;
     const leavingName = state.variableNames[leavingBefore] ?? `x${leavingBefore + 1}`;
-
-    // Lưu snapshot TRƯỚC khi pivot để UI tô đỏ đúng ô pivot trên bảng hiện tại.
-    // Thuật toán không đổi: sau khi lưu bảng để hiển thị, ta vẫn pivot như cũ.
     steps.push(snapshot(phase, iter, state, entering, leaving, leavingBefore, pv, reducedCostBefore, ratios, `Pivot: ${enteringName} vào, ${leavingName} ra.`));
-
-    pivot(state.tableau, state.basis, leaving, entering);
   }
   return 'iteration-limit';
 }
@@ -258,33 +262,9 @@ function removeArtificialAndSetPhaseTwo(state: TableauState, costs: number[]): b
 
 function hasAlternateOptimum(tableau: number[][], basis: number[], originalCount: number): boolean {
   const basic = new Set(basis);
-  const rhs = tableau[0].length - 1;
-
   for (let j = 0; j < originalCount; j += 1) {
-    if (basic.has(j) || !nearlyZero(tableau[0][j])) continue;
-
-    // Reduced cost = 0 chỉ là dấu hiệu nghi ngờ có đa nghiệm.
-    // Nếu mọi bước di chuyển khả dĩ đều bằng 0, đó chỉ là pivot suy biến,
-    // không tạo ra nghiệm tối ưu khác.
-    let minRatio = Infinity;
-    let hasLeavingCandidate = false;
-
-    for (let i = 1; i < tableau.length; i += 1) {
-      const col = tableau[i][j];
-      if (col <= EPS) continue;
-
-      hasLeavingCandidate = true;
-      const ratio = tableau[i][rhs] / col;
-      if (ratio >= -EPS) minRatio = Math.min(minRatio, ratio);
-    }
-
-    // Reduced cost = 0 và không có hàng chặn nghĩa là có tia tối ưu.
-    if (!hasLeavingCandidate) return true;
-
-    // Chỉ kết luận đa nghiệm nếu có thể tăng biến ngoài cơ sở một lượng dương.
-    if (Number.isFinite(minRatio) && minRatio > EPS) return true;
+    if (!basic.has(j) && nearlyZero(tableau[0][j])) return true;
   }
-
   return false;
 }
 
@@ -318,6 +298,7 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
         optimalValue: geom.optimalPoint.value,
         isDegenerate: false,
         hasAlternateOptimum: false,
+        diagnostics: makeDiagnostics(false, false),
         message: geom.message,
       };
     } else {
@@ -333,62 +314,8 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
         optimalValue: null,
         isDegenerate: false,
         hasAlternateOptimum: false,
+        diagnostics: makeDiagnostics(false, false),
         message: geom.message,
-      };
-    }
-  }
-
-  if (method === 'two-phase') {
-    const phaseOneX0 = analyzeTwoPhaseX0(standard);
-
-    if (phaseOneX0.status === 'infeasible') {
-      return {
-        status: 'infeasible',
-        method,
-        standard,
-        variableNames,
-        basisNames: [],
-        steps,
-        solutionStandard: [],
-        solutionOriginal: [],
-        optimalValue: null,
-        isDegenerate: false,
-        hasAlternateOptimum: false,
-        message: phaseOneX0.reason,
-      };
-    }
-
-    if (phaseOneX0.status === 'unbounded') {
-      return {
-        status: 'unbounded',
-        method,
-        standard,
-        variableNames,
-        basisNames: [],
-        steps,
-        solutionStandard: [],
-        solutionOriginal: [],
-        optimalValue: null,
-        isDegenerate: false,
-        hasAlternateOptimum: false,
-        message: phaseOneX0.reason,
-      };
-    }
-
-    if (phaseOneX0.status === 'optimal') {
-      return {
-        status: 'optimal',
-        method,
-        standard,
-        variableNames,
-        basisNames: [],
-        steps,
-        solutionStandard: phaseOneX0.solutionStandard,
-        solutionOriginal: phaseOneX0.solutionOriginal,
-        optimalValue: phaseOneX0.optimalValue,
-        isDegenerate: false,
-        hasAlternateOptimum: false,
-        message: phaseOneX0.reason,
       };
     }
   }
@@ -452,7 +379,8 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
     optimalValue: cleanNumber(originalValue),
     isDegenerate: degenerate,
     hasAlternateOptimum: alternate,
-    message: alternate ? 'Đã tìm được nghiệm tối ưu và có dấu hiệu đa nghiệm.' : 'Đã tìm được nghiệm tối ưu.',
+    diagnostics: makeDiagnostics(degenerate, alternate),
+    message: alternate ? 'Tối ưu và có dấu hiệu đa nghiệm.' : degenerate ? 'Tối ưu nhưng có suy biến.' : 'Đã tìm được nghiệm tối ưu.',
   };
 }
 
@@ -477,6 +405,7 @@ function baseResult(
     optimalValue: null,
     isDegenerate: false,
     hasAlternateOptimum: false,
+    diagnostics: makeDiagnostics(false, false),
     message,
   };
 }
