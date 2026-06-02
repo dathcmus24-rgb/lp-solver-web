@@ -141,10 +141,15 @@ function runSimplexLoop(
     const reducedCostBefore = state.tableau[0][entering];
     const pv = state.tableau[leaving][entering];
     const leavingBefore = state.basis[leaving - 1];
-    pivot(state.tableau, state.basis, leaving, entering);
     const enteringName = state.variableNames[entering] ?? `x${entering + 1}`;
     const leavingName = state.variableNames[leavingBefore] ?? `x${leavingBefore + 1}`;
+
+    // Lưu snapshot TRƯỚC khi pivot để TableauView tô đỏ đúng ô giao
+    // giữa cột biến vào và hàng biến ra. Thuật toán không đổi:
+    // sau khi lưu dữ liệu hiển thị, ta vẫn thực hiện pivot như cũ.
     steps.push(snapshot(phase, iter, state, entering, leaving, leavingBefore, pv, reducedCostBefore, ratios, `Pivot: ${enteringName} vào, ${leavingName} ra.`));
+
+    pivot(state.tableau, state.basis, leaving, entering);
   }
   return 'iteration-limit';
 }
