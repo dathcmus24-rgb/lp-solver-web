@@ -11,7 +11,9 @@
     "test:flows": "tsx scripts/run-method-flow-tests.ts",
     "test:examples": "tsx scripts/run-example-tests.ts",
     "test:warnings": "tsx scripts/run-method-warning-tests.ts",
-    "test:summary": "tsx scripts/run-summary-tests.ts"
+    "test:summary": "tsx scripts/run-summary-tests.ts",
+    "test:two-phase-summary": "tsx scripts/run-two-phase-summary-tests.ts",
+    "test:audit": "tsx scripts/run-audit-regression-tests.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",
@@ -38,6 +40,5 @@
     "postcss": "latest",
     "tailwindcss": "latest",
     "tsx": "^4.19.2"
-  },
-  "test:examples": "tsx scripts/run-example-tests.ts"
+  }
 }

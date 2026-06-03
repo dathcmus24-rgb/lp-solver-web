@@ -1,4 +1,4 @@
-import type { ConstraintRow, SimplexResult, SolveDiagnostics, SolveMethod, StandardModel, TableauStep } from './types';
+import type { ConstraintRow, SimplexResult, SolveMethod, StandardModel, TableauStep } from './types';
 import { cleanNumber, cloneMatrix, EPS, nearlyZero } from './format';
 import { recoverOriginalSolution, standardize } from './standardize';
 import { solveGeometric } from './geometry';
@@ -9,15 +9,6 @@ interface TableauState {
   variableNames: string[];
   originalVariableCount: number;
   artificial: Set<number>;
-}
-
-
-function makeDiagnostics(isDegenerate = false, hasAlternateOptimum = false): SolveDiagnostics {
-  return {
-    isDegenerate,
-    hasAlternateOptimum,
-    isCyclingRisk: isDegenerate && hasAlternateOptimum,
-  };
 }
 
 function objectiveValue(tableau: number[][]): number {
@@ -144,9 +135,9 @@ function runSimplexLoop(
     const enteringName = state.variableNames[entering] ?? `x${entering + 1}`;
     const leavingName = state.variableNames[leavingBefore] ?? `x${leavingBefore + 1}`;
 
-    // Lưu snapshot TRƯỚC khi pivot để TableauView tô đỏ đúng ô giao
-    // giữa cột biến vào và hàng biến ra. Thuật toán không đổi:
-    // sau khi lưu dữ liệu hiển thị, ta vẫn thực hiện pivot như cũ.
+    // Store the tableau BEFORE pivoting so the UI can highlight the exact
+    // intersection of the entering column and the leaving row, matching the
+    // textbook/Excel-style tableau.
     steps.push(snapshot(phase, iter, state, entering, leaving, leavingBefore, pv, reducedCostBefore, ratios, `Pivot: ${enteringName} vào, ${leavingName} ra.`));
 
     pivot(state.tableau, state.basis, leaving, entering);
@@ -184,36 +175,43 @@ function buildPhaseOneTableau(model: StandardModel): TableauState {
   let varCount = n;
 
   model.constraints.forEach((r, i) => {
+    if (r.sign !== '<=') {
+      throw new Error('Model must be in standard form Ax <= b before Phase 1.');
+    }
+
     const row = Array.from({ length: varCount }, (_, j) => r.a[j] ?? 0);
     const extendPreviousRows = () => rows.forEach((old) => old.splice(old.length - 1, 0, 0));
 
-    if (r.sign === '<=') {
+    if (r.b >= -EPS) {
+      // a x + w = b, w là biến cơ sở xuất phát khả thi khi b >= 0.
       extendPreviousRows();
       row.push(1);
       variableNames.push(`s${i + 1}`);
       basis.push(varCount);
       varCount += 1;
-    } else if (r.sign === '>=') {
+      row.push(Math.max(0, r.b));
+      rows.push(row);
+    } else {
+      // a x + w = b với b < 0 không khả thi.
+      // Nhân dòng với -1: -a x - w = -b, thêm biến giả để có cơ sở Pha 1:
+      // -a x - w + a_i = -b.
+      for (let j = 0; j < n; j += 1) row[j] = -(r.a[j] ?? 0);
+
       extendPreviousRows();
       row.push(-1);
-      variableNames.push(`e${i + 1}`);
+      variableNames.push(`s${i + 1}`);
       varCount += 1;
+
       extendPreviousRows();
       row.push(1);
       variableNames.push(`a${i + 1}`);
       artificial.add(varCount);
       basis.push(varCount);
       varCount += 1;
-    } else {
-      extendPreviousRows();
-      row.push(1);
-      variableNames.push(`a${i + 1}`);
-      artificial.add(varCount);
-      basis.push(varCount);
-      varCount += 1;
+
+      row.push(-r.b);
+      rows.push(row);
     }
-    row.push(r.b);
-    rows.push(row);
   });
 
   const width = varCount + 1;
@@ -282,6 +280,54 @@ function collectSolution(state: TableauState): number[] {
   return sol.map(cleanNumber);
 }
 
+function validateOriginalFeasibility(input: import('./types').LPInput, solution: number[]): { ok: boolean; reason: string } {
+  for (let j = 0; j < input.n; j += 1) {
+    const value = solution[j] ?? 0;
+    const type = input.variableTypes[j];
+
+    if (!Number.isFinite(value)) {
+      return { ok: false, reason: `Biến x${j + 1} có giá trị không hợp lệ.` };
+    }
+
+    if (type === 'nonnegative' && value < -1e-7) {
+      return { ok: false, reason: `Biến x${j + 1} = ${cleanNumber(value)} vi phạm điều kiện x${j + 1} ≥ 0.` };
+    }
+
+    if (type === 'nonpositive' && value > 1e-7) {
+      return { ok: false, reason: `Biến x${j + 1} = ${cleanNumber(value)} vi phạm điều kiện x${j + 1} ≤ 0.` };
+    }
+  }
+
+  for (let i = 0; i < input.m; i += 1) {
+    const lhs = input.A[i].reduce((sum, coef, j) => sum + coef * (solution[j] ?? 0), 0);
+    const rhs = input.b[i] ?? 0;
+    const sign = input.signs[i];
+
+    if (sign === '<=' && lhs > rhs + 1e-7) {
+      return {
+        ok: false,
+        reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} > RHS = ${cleanNumber(rhs)}.`,
+      };
+    }
+
+    if (sign === '>=' && lhs < rhs - 1e-7) {
+      return {
+        ok: false,
+        reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} < RHS = ${cleanNumber(rhs)}.`,
+      };
+    }
+
+    if (sign === '=' && Math.abs(lhs - rhs) > 1e-7) {
+      return {
+        ok: false,
+        reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} khác RHS = ${cleanNumber(rhs)}.`,
+      };
+    }
+  }
+
+  return { ok: true, reason: 'Nghiệm thỏa bài toán gốc.' };
+}
+
 export function solveLP(input: import('./types').LPInput, method: SolveMethod): SimplexResult {
   const standard = standardize(input);
   const steps: TableauStep[] = [];
@@ -302,13 +348,13 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
         solutionOriginal: [geom.optimalPoint.x, geom.optimalPoint.y],
         optimalValue: geom.optimalPoint.value,
         isDegenerate: false,
-        hasAlternateOptimum: false,
-        diagnostics: makeDiagnostics(false, false),
+        hasAlternateOptimum: Boolean(geom.optimalSegment),
+        diagnostics: { isDegenerate: false, hasAlternateOptimum: Boolean(geom.optimalSegment), isCyclingRisk: false },
         message: geom.message,
       };
     } else {
       return {
-        status: geom.status === 'infeasible' ? 'infeasible' : 'error',
+        status: geom.status,
         method,
         standard,
         variableNames: ['x1', 'x2'],
@@ -319,7 +365,7 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
         optimalValue: null,
         isDegenerate: false,
         hasAlternateOptimum: false,
-        diagnostics: makeDiagnostics(false, false),
+        diagnostics: { isDegenerate: false, hasAlternateOptimum: false, isCyclingRisk: false },
         message: geom.message,
       };
     }
@@ -328,13 +374,74 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
   let state: TableauState | null = null;
   let loopStatus: 'optimal' | 'unbounded' | 'iteration-limit' = 'optimal';
 
+  const hasNegativeRhs = standard.constraints.some((r) => r.b < -EPS);
+
   if (method === 'simplex' || method === 'bland') {
+    // Simplex và Bland giải trực tiếp trên dạng chuẩn min c^T x, Ax <= b, x >= 0
+    // khi từ vựng xuất phát khả thi, tức b_i >= 0. Không tự động chạy 2 pha.
+    if (hasNegativeRhs) {
+      const emptyState: TableauState = {
+        tableau: [[0]],
+        basis: [],
+        variableNames,
+        originalVariableCount: variableNames.length,
+        artificial: new Set(),
+      };
+
+      return baseResult(
+        input,
+        method,
+        standard,
+        emptyState,
+        steps,
+        'error',
+        'Sau khi đưa về dạng chuẩn còn tồn tại b_i < 0, nên Simplex/Bland không có từ vựng xuất phát khả thi. Hãy dùng phương pháp 2 pha.',
+      );
+    }
+
     state = buildDirectTableau(standard);
     if (state == null) {
+      const emptyState: TableauState = {
+        tableau: [[0]],
+        basis: [],
+        variableNames,
+        originalVariableCount: variableNames.length,
+        artificial: new Set(),
+      };
+
+      return baseResult(
+        input,
+        method,
+        standard,
+        emptyState,
+        steps,
+        'error',
+        'Dạng chuẩn chưa phải Ax <= b nên không thể giải trực tiếp bằng Simplex/Bland.',
+      );
+    }
+
+    loopStatus = runSimplexLoop(state, bland ? 'Bland' : 'Simplex', steps, bland);
+  } else {
+    // Two-Phase chỉ thật sự cần khi có b_i < 0. Nếu b_i >= 0 hết,
+    // bài toán đã có từ vựng xuất phát khả thi và có thể giải trực tiếp.
+    if (!hasNegativeRhs) {
+      state = buildDirectTableau(standard);
+      if (state == null) {
+        const emptyState: TableauState = {
+          tableau: [[0]],
+          basis: [],
+          variableNames,
+          originalVariableCount: variableNames.length,
+          artificial: new Set(),
+        };
+        return baseResult(input, method, standard, emptyState, steps, 'error', 'Dạng chuẩn chưa phải Ax <= b.');
+      }
+      loopStatus = runSimplexLoop(state, 'Phase 2', steps, true);
+    } else {
       state = buildPhaseOneTableau(standard);
-      loopStatus = runSimplexLoop(state, 'Phase 1', steps, bland);
+      loopStatus = runSimplexLoop(state, 'Phase 1', steps, true);
       if (loopStatus !== 'optimal') {
-        return baseResult(input, method, standard, state, steps, loopStatus === 'unbounded' ? 'infeasible' : 'error', 'Không tìm được phương án cơ sở ban đầu ở Pha 1.');
+        return baseResult(input, method, standard, state, steps, 'infeasible', 'Pha 1 không kết thúc tối ưu.');
       }
       if (objectiveValue(state.tableau) > EPS) {
         return baseResult(input, method, standard, state, steps, 'infeasible', 'Pha 1 có giá trị tối ưu > 0, bài toán vô nghiệm.');
@@ -343,31 +450,29 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
       if (!removeArtificialAndSetPhaseTwo(state, phase2Costs)) {
         return baseResult(input, method, standard, state, steps, 'infeasible', 'Không loại được biến giả khỏi cơ sở.');
       }
-      loopStatus = runSimplexLoop(state, bland ? 'Bland' : 'Simplex', steps, bland);
-    } else {
-      loopStatus = runSimplexLoop(state, bland ? 'Bland' : 'Simplex', steps, bland);
+      loopStatus = runSimplexLoop(state, 'Phase 2', steps, true);
     }
-  } else {
-    state = buildPhaseOneTableau(standard);
-    loopStatus = runSimplexLoop(state, 'Phase 1', steps, true);
-    if (loopStatus !== 'optimal') {
-      return baseResult(input, method, standard, state, steps, 'infeasible', 'Pha 1 không kết thúc tối ưu.');
-    }
-    if (objectiveValue(state.tableau) > EPS) {
-      return baseResult(input, method, standard, state, steps, 'infeasible', 'Pha 1 có giá trị tối ưu > 0, bài toán vô nghiệm.');
-    }
-    const phase2Costs = [...standard.c, ...Array.from({ length: state.tableau[0].length - 1 - standard.c.length }, () => 0)];
-    if (!removeArtificialAndSetPhaseTwo(state, phase2Costs)) {
-      return baseResult(input, method, standard, state, steps, 'infeasible', 'Không loại được biến giả khỏi cơ sở.');
-    }
-    loopStatus = runSimplexLoop(state, 'Phase 2', steps, true);
   }
 
   if (loopStatus === 'unbounded') return baseResult(input, method, standard, state, steps, 'unbounded', 'Bài toán không bị chặn.');
-  if (loopStatus === 'iteration-limit') return baseResult(input, method, standard, state, steps, 'error', 'Vượt quá giới hạn số bước lặp.');
+  if (loopStatus === 'iteration-limit') return baseResult(input, method, standard, state, steps, 'iteration-limit', 'Vượt quá giới hạn số bước lặp.');
 
   const solStd = collectSolution(state);
   const solOriginal = recoverOriginalSolution(solStd, standard);
+  const feasibility = validateOriginalFeasibility(input, solOriginal);
+
+  if (!feasibility.ok) {
+    return baseResult(
+      input,
+      method,
+      standard,
+      state,
+      steps,
+      'infeasible',
+      `Nghiệm thu được từ tableau không thỏa bài toán gốc. ${feasibility.reason} Do đó không kết luận tối ưu.`,
+    );
+  }
+
   const minValue = objectiveValue(state.tableau);
   const originalValue = input.optimization === 'max' ? -minValue : minValue;
   const degenerate = state.tableau.slice(1).some((row) => nearlyZero(row[row.length - 1]));
@@ -384,7 +489,7 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
     optimalValue: cleanNumber(originalValue),
     isDegenerate: degenerate,
     hasAlternateOptimum: alternate,
-    diagnostics: makeDiagnostics(degenerate, alternate),
+    diagnostics: { isDegenerate: degenerate, hasAlternateOptimum: alternate, isCyclingRisk: method !== 'bland' && method !== 'two-phase' && degenerate },
     message: alternate ? 'Tối ưu và có dấu hiệu đa nghiệm.' : degenerate ? 'Tối ưu nhưng có suy biến.' : 'Đã tìm được nghiệm tối ưu.',
   };
 }
@@ -410,7 +515,7 @@ function baseResult(
     optimalValue: null,
     isDegenerate: false,
     hasAlternateOptimum: false,
-    diagnostics: makeDiagnostics(false, false),
+    diagnostics: { isDegenerate: false, hasAlternateOptimum: false, isCyclingRisk: false },
     message,
   };
 }

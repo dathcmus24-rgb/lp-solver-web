@@ -6,6 +6,7 @@ import { fmt } from '../lib/format';
 import { Card } from './Card';
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const CONSTRAINT_COLORS = ['#38bdf8', '#fb923c', '#22c55e', '#a78bfa', '#f472b6', '#facc15', '#2dd4bf', '#c084fc'];
 
 function addUniquePoint(points: Array<{ x: number; y: number }>, p: { x: number; y: number }): void {
   if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
@@ -204,7 +205,7 @@ function labelForPoint(point: Point2D, points: Point2D[]): string {
   return index >= 0 ? LETTERS[index] ?? `P${index + 1}` : '';
 }
 
-export function GeometryGraph({ result, input }: { result: GeometryResult | null; input: LPInput }) {
+export function GeometryGraph({ result, input }: { result: GeometryResult | null; input?: LPInput }) {
   const [manualZ, setManualZ] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [showFeasible, setShowFeasible] = useState(true);
@@ -216,15 +217,15 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
     setManualZ(null);
     setZoom(1);
     setActiveLineIndex(null);
-  }, [input.c[0], input.c[1], input.optimization, input.n, input.m, JSON.stringify(input.A), JSON.stringify(input.b), JSON.stringify(input.signs)]);
+  }, [input?.c?.[0], input?.c?.[1], input?.optimization, input?.n, input?.m, JSON.stringify(input?.A ?? []), JSON.stringify(input?.b ?? []), JSON.stringify(input?.signs ?? [])]);
 
   const objective = useMemo(() => ({
-    c1: input.c[0] ?? 0,
-    c2: input.c[1] ?? 0,
-  }), [input.c]);
+    c1: input?.c?.[0] ?? 0,
+    c2: input?.c?.[1] ?? 0,
+  }), [input?.c]);
 
   if (!result) return null;
-  if (!result.supported) return <Card title="Đồ thị hình học"><div className="rounded-2xl bg-amber-50 p-4 text-amber-800 dark:bg-amber-950 dark:text-amber-100">{result.message}</div></Card>;
+  if (!result.supported) return <Card title="4. Biểu diễn hình học"><div className="rounded-2xl bg-amber-50 p-4 text-amber-800 dark:bg-amber-950 dark:text-amber-100">{result.message}</div></Card>;
 
   const pts = result.feasiblePoints;
   const xValues = [0, ...pts.map((p) => p.x), result.optimalPoint?.x ?? 0, result.optimalSegment?.a.x ?? 0, result.optimalSegment?.b.x ?? 0];
@@ -240,20 +241,22 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
 
   const visibleFeasibleRegion = buildVisibleFeasibleRegion(result.lines, minX, maxX, minY, maxY);
 
-  const cornerValues = [
-    objectiveValueAt(input, minX, minY),
-    objectiveValueAt(input, minX, maxY),
-    objectiveValueAt(input, maxX, minY),
-    objectiveValueAt(input, maxX, maxY),
-    ...pts.map((p) => objectiveValueAt(input, p.x, p.y)),
-  ].filter(Number.isFinite);
+  const cornerValues = input
+    ? [
+        objectiveValueAt(input, minX, minY),
+        objectiveValueAt(input, minX, maxY),
+        objectiveValueAt(input, maxX, minY),
+        objectiveValueAt(input, maxX, maxY),
+        ...pts.map((p) => objectiveValueAt(input, p.x, p.y)),
+      ].filter(Number.isFinite)
+    : [result.optimalPoint?.value ?? 0].filter(Number.isFinite);
 
   const rawMinZ = Math.min(0, ...cornerValues, result.optimalPoint?.value ?? 0);
   const rawMaxZ = Math.max(1, ...cornerValues, result.optimalPoint?.value ?? 1);
   const paddingZ = Math.max(1, (rawMaxZ - rawMinZ) * 0.15);
   const minZ = rawMinZ - paddingZ;
   const maxZ = rawMaxZ + paddingZ;
-  const defaultZ = result.optimalPoint?.value ?? (input.optimization === 'max' ? maxZ : minZ);
+  const defaultZ = result.optimalPoint?.value ?? (input?.optimization === 'max' ? maxZ : minZ);
   const zValue = manualZ ?? defaultZ;
   const objectiveSegment = objectiveLineSegment(objective.c1, objective.c2, zValue, minX, maxX, minY, maxY);
   const objectiveEnabled = Math.abs(objective.c1) > 1e-9 || Math.abs(objective.c2) > 1e-9;
@@ -279,7 +282,7 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
 
   const directionLength = 44;
   const objectiveNorm = Math.hypot(objective.c1, objective.c2) || 1;
-  const directionSign = input.optimization === 'max' ? 1 : -1;
+  const directionSign = input?.optimization === 'max' ? 1 : -1;
   const directionStart = { x: width - 132, y: 76 };
   const directionEnd = {
     x: directionStart.x + directionSign * (objective.c1 / objectiveNorm) * directionLength,
@@ -291,13 +294,13 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
     : '';
 
   return (
-    <Card title="Đồ thị phương pháp hình học">
+    <Card title="4. Biểu diễn hình học">
       <div className="mb-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 dark:border-indigo-900 dark:bg-indigo-950/30">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="font-bold text-indigo-950 dark:text-indigo-100">Bảng điều khiển hình học</h3>
             <p className="mt-1 text-sm text-indigo-800 dark:text-indigo-200">
-              Đường đỏ nét đứt biểu diễn <b>z = {objectiveFormula}</b>. Các điều chỉnh bên dưới chỉ thay đổi hình vẽ, không ảnh hưởng thuật toán.
+              {input ? <>Đường đỏ nét đứt biểu diễn <b>z = {objectiveFormula}</b>. Các điều chỉnh bên dưới chỉ thay đổi hình vẽ, không ảnh hưởng thuật toán.</> : <>Đồ thị đang hiển thị miền nghiệm và các ràng buộc. Truyền thêm <b>input</b> để bật đường mục tiêu tương tác.</>}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -374,15 +377,15 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_260px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="overflow-x-auto">
-          <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[780px] rounded-3xl bg-white shadow-inner dark:bg-slate-950">
+          <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[820px] rounded-3xl bg-slate-50 shadow-inner ring-1 ring-slate-200 dark:bg-slate-950 dark:ring-slate-800">
             <defs>
               <marker id="axis-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
                 <path d="M0,0 L0,6 L8,3 z" className="fill-slate-500 dark:fill-slate-400" />
               </marker>
               <marker id="objective-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L8,3 z" className="fill-rose-500" />
+                <path d="M0,0 L0,6 L8,3 z" className="fill-amber-400 stroke-white dark:stroke-slate-950" strokeWidth={2} />
               </marker>
             </defs>
 
@@ -416,7 +419,7 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
 
             {/* Feasible region clipped by viewport */}
             {showFeasible && visibleFeasibleRegion.length >= 3 && (
-              <path d={`${polygonPath(visibleFeasibleRegion) ?? ''}Z`} className="fill-indigo-500/20 stroke-indigo-500" strokeWidth={2.2} />
+              <path d={`${polygonPath(visibleFeasibleRegion) ?? ''}Z`} className="fill-indigo-500/25 stroke-indigo-400" strokeWidth={2.4} />
             )}
 
             {/* Constraint lines */}
@@ -427,8 +430,9 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
                   y1={yScale(l.samples[0].y)}
                   x2={xScale(l.samples[1].x)}
                   y2={yScale(l.samples[1].y)}
-                  className={activeLineIndex === i ? 'stroke-sky-600 dark:stroke-sky-400' : 'stroke-slate-400 dark:stroke-slate-600'}
-                  strokeWidth={activeLineIndex === i ? 3 : 1.6}
+                  stroke={CONSTRAINT_COLORS[i % CONSTRAINT_COLORS.length]}
+                  strokeWidth={activeLineIndex === i ? 3.2 : 2}
+                  opacity={activeLineIndex === i || activeLineIndex == null ? 0.95 : 0.35}
                 />
                 {showLabels && (
                   <text
@@ -512,7 +516,7 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
                   y1={yScale(result.optimalSegment.a.y)}
                   x2={xScale(result.optimalSegment.b.x)}
                   y2={yScale(result.optimalSegment.b.y)}
-                  className="stroke-emerald-500"
+                  className="stroke-amber-400"
                   strokeWidth={6}
                   strokeLinecap="round"
                 />
@@ -524,7 +528,7 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
             {/* Vertices */}
             {pts.map((p, i) => (
               <g key={i}>
-                <circle cx={xScale(p.x)} cy={yScale(p.y)} r={4.5} className="fill-indigo-700 dark:fill-indigo-300" />
+                <circle cx={xScale(p.x)} cy={yScale(p.y)} r={4.5} className="fill-indigo-500 stroke-white dark:stroke-slate-950" strokeWidth={1.5} />
                 {showLabels && (
                   <text x={xScale(p.x) + 7} y={yScale(p.y) - 7} className="fill-slate-700 text-[11px] font-bold dark:fill-slate-300">
                     {LETTERS[i] ?? `P${i + 1}`}({fmt(p.x)}, {fmt(p.y)})
@@ -536,7 +540,7 @@ export function GeometryGraph({ result, input }: { result: GeometryResult | null
             {/* Unique optimal point */}
             {result.optimalPoint && !result.optimalSegment && (
               <g>
-                <circle cx={xScale(result.optimalPoint.x)} cy={yScale(result.optimalPoint.y)} r={8} className="fill-rose-500" />
+                <circle cx={xScale(result.optimalPoint.x)} cy={yScale(result.optimalPoint.y)} r={8} className="fill-amber-400 stroke-white dark:stroke-slate-950" strokeWidth={2} />
                 {showLabels && (
                   <text x={xScale(result.optimalPoint.x) + 10} y={yScale(result.optimalPoint.y) + 18} className="fill-rose-600 text-xs font-bold dark:fill-rose-400">
                     Tối ưu z={fmt(result.optimalPoint.value)}

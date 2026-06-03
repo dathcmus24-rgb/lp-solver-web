@@ -1,14 +1,84 @@
 import { Fragment } from 'react';
 import type { SimplexResult } from '../lib/types';
 import { displaySolverText, displaySolverVar, fmt, formatVarNameHtml } from '../lib/format';
-import { buildResultSummary } from '../lib/solutionSummary';
+import { buildResultSummary, type ResultSummary } from '../lib/solutionSummary';
 import { Card } from './Card';
 import { TableauView } from './TableauView';
 import { TwoPhaseDictionaryView } from './TwoPhaseDictionaryView';
 
+type SummaryTone = {
+  key: 'optimal' | 'alternate' | 'infeasible' | 'unbounded' | 'error' | 'idle';
+  banner: string;
+  badge: string;
+  soft: string;
+  border: string;
+};
+
+function getSummaryTone(summary: ResultSummary): SummaryTone {
+  const solution = summary.solutionText.toLowerCase();
+  const status = summary.statusText.toLowerCase();
+
+  if (solution.includes('vô số nghiệm')) {
+    return {
+      key: 'alternate',
+      banner: 'border-indigo-300 bg-indigo-50 text-indigo-950 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100',
+      badge: 'bg-indigo-600 text-white',
+      soft: 'bg-indigo-50 text-indigo-950 dark:bg-indigo-950/40 dark:text-indigo-100',
+      border: 'border-indigo-300 dark:border-indigo-900',
+    };
+  }
+
+  if (status.includes('vô nghiệm')) {
+    return {
+      key: 'infeasible',
+      banner: 'border-rose-300 bg-rose-50 text-rose-950 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100',
+      badge: 'bg-rose-600 text-white',
+      soft: 'bg-rose-50 text-rose-950 dark:bg-rose-950/40 dark:text-rose-100',
+      border: 'border-rose-300 dark:border-rose-900',
+    };
+  }
+
+  if (status.includes('không giới nội')) {
+    return {
+      key: 'unbounded',
+      banner: 'border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100',
+      badge: 'bg-amber-500 text-slate-950',
+      soft: 'bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100',
+      border: 'border-amber-300 dark:border-amber-900',
+    };
+  }
+
+  if (status.includes('tối ưu')) {
+    return {
+      key: 'optimal',
+      banner: 'border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100',
+      badge: 'bg-emerald-600 text-white',
+      soft: 'bg-emerald-50 text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100',
+      border: 'border-emerald-300 dark:border-emerald-900',
+    };
+  }
+
+  return {
+    key: 'error',
+    banner: 'border-slate-300 bg-slate-50 text-slate-900 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-100',
+    badge: 'bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-950',
+    soft: 'bg-slate-50 text-slate-900 dark:bg-slate-950/60 dark:text-slate-100',
+    border: 'border-slate-300 dark:border-slate-800',
+  };
+}
+
 export function ResultPanel({ result, visibleStep, setVisibleStep }: { result: SimplexResult | null; visibleStep: number; setVisibleStep: (n: number) => void }) {
   if (!result) {
-    return <Card title="3. Kết quả"><div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-slate-500 dark:border-slate-700">Nhập bài toán và bấm “Chạy toàn bộ” để xem dạng chuẩn, tableau và từng bước giải.</div></Card>;
+    return (
+      <Card title="3. Kết quả">
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50/70 p-8 text-center dark:border-slate-700 dark:bg-slate-950/50">
+          <div className="text-lg font-black text-slate-900 dark:text-slate-100">Chưa có kết quả</div>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+            Nhập bài toán và bấm “Giải bài toán” để xem dạng chuẩn, bảng lặp, nghiệm tối ưu và kết luận bằng lời.
+          </p>
+        </div>
+      </Card>
+    );
   }
 
   const maxStep = Math.max(0, result.steps.length - 1);
@@ -29,13 +99,23 @@ export function ResultPanel({ result, visibleStep, setVisibleStep }: { result: S
         </div>
       ) : (
         <>
-          {result.steps.length > 0 && <div className="my-5 flex flex-wrap items-center gap-3"><button onClick={() => setVisibleStep(Math.max(0, visibleStep - 1))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold dark:border-slate-700">Bước trước</button><button onClick={() => setVisibleStep(Math.min(maxStep, visibleStep + 1))} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">Bước sau</button><input type="range" min={0} max={maxStep} value={visibleStep} onChange={(e) => setVisibleStep(Number(e.target.value))} className="min-w-[180px] flex-1 accent-indigo-600" /><span className="text-sm text-slate-500">{visibleStep + 1}/{result.steps.length}</span></div>}
+          {result.steps.length > 0 && (
+            <div className="my-5 flex flex-wrap items-center gap-3">
+              <button onClick={() => setVisibleStep(Math.max(0, visibleStep - 1))} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold dark:border-slate-700">Bước trước</button>
+              <button onClick={() => setVisibleStep(Math.min(maxStep, visibleStep + 1))} className="rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">Bước sau</button>
+              <input type="range" min={0} max={maxStep} value={visibleStep} onChange={(e) => setVisibleStep(Number(e.target.value))} className="min-w-[180px] flex-1 accent-indigo-600" />
+              <span className="text-sm text-slate-500">{visibleStep + 1}/{result.steps.length}</span>
+            </div>
+          )}
 
           <div className="space-y-5">
             {shown.map((step, idx) => (
               <article key={`${step.phase}-${idx}`} className="rounded-3xl border border-slate-200 p-4 dark:border-slate-800">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <div><h3 className="font-bold text-slate-900 dark:text-slate-100">{step.phase} — Iteration {step.iteration}</h3><p className="text-sm text-slate-500">{displaySolverText(step.note ?? '')}</p></div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 dark:text-slate-100">{step.phase} — Iteration {step.iteration}</h3>
+                    <p className="text-sm text-slate-500">{displaySolverText(step.note ?? '')}</p>
+                  </div>
                   <div className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">z = {fmt(step.objectiveValue)}</div>
                 </div>
                 <div className="mb-3 grid gap-3 md:grid-cols-5">
@@ -45,7 +125,12 @@ export function ResultPanel({ result, visibleStep, setVisibleStep }: { result: S
                   <Info label="Pivot" value={step.pivot == null ? '—' : fmt(step.pivot.value)} />
                   <Info label="Basis" value={step.basis.map((b) => displaySolverVar(step.variableNames[b] ?? `x${b + 1}`)).join(', ')} />
                 </div>
-                {step.ratioTest.length > 0 && <div className="mb-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-slate-950"><span className="font-semibold">Ratio test: </span>{step.ratioTest.map((r) => `${displaySolverVar(step.variableNames[r.basis] ?? `x${r.basis + 1}`)}: ${r.value == null ? '—' : fmt(r.value)}`).join(' | ')}</div>}
+                {step.ratioTest.length > 0 && (
+                  <div className="mb-3 rounded-2xl bg-slate-50 p-3 text-sm dark:bg-slate-950">
+                    <span className="font-semibold">Ratio test: </span>
+                    {step.ratioTest.map((r) => `${displaySolverVar(step.variableNames[r.basis] ?? `x${r.basis + 1}`)}: ${r.value == null ? '—' : fmt(r.value)}`).join(' | ')}
+                  </div>
+                )}
                 <TableauView step={step} />
               </article>
             ))}
@@ -58,29 +143,32 @@ export function ResultPanel({ result, visibleStep, setVisibleStep }: { result: S
 
 function ResultSummaryView({ result }: { result: SimplexResult }) {
   const summary = buildResultSummary(result);
+  const tone = getSummaryTone(summary);
 
   return (
-    <section className="rounded-3xl border border-indigo-200 bg-indigo-50 p-5 dark:border-indigo-900 dark:bg-indigo-950/40">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-black text-indigo-950 dark:text-indigo-100">4. Tổng kết kết quả</h3>
-          <p className="mt-1 text-sm text-indigo-800 dark:text-indigo-200">Tóm tắt theo phương pháp, trạng thái, nghiệm, giá trị tối ưu và kết luận.</p>
+    <section className={`overflow-hidden rounded-3xl border p-5 ${tone.banner}`}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-wide opacity-70">4. Tổng kết kết quả</div>
+          <h3 className="mt-2 text-2xl font-black tracking-tight">{summary.statusText}</h3>
+          <p className="mt-2 max-w-3xl break-words text-sm leading-6 opacity-90">{summary.conclusion}</p>
         </div>
-        <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-indigo-700 dark:bg-slate-900 dark:text-indigo-200">{summary.statusText}</span>
+        <span className={`shrink-0 rounded-full px-4 py-2 text-sm font-black shadow-sm ${tone.badge}`}>{summary.statusText}</span>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryBox title="1. Phương pháp được dùng" value={summary.methodText} />
-        <SummaryBox title="2. Trạng thái bài toán" value={summary.statusText} />
-        <SummaryBox title="3. Nghiệm tối ưu" value={summary.solutionText} mono />
-        <SummaryBox title="4. Giá trị hàm mục tiêu" value={summary.optimalValueText} large />
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryMetric title="Phương pháp" value={summary.methodText} />
+        <SummaryMetric title="Trạng thái" value={summary.statusText} />
+        <SummaryMetric title="Nghiệm tối ưu" value={summary.solutionText} important />
+        <SummaryMetric title="Giá trị hàm mục tiêu" value={summary.optimalValueText} valueClassName="text-2xl font-black" />
       </div>
 
-      <div className="mt-4 rounded-2xl bg-white p-4 dark:bg-slate-900">
-        <div className="text-xs font-black uppercase tracking-wide text-slate-500">5. Kết luận bằng lời</div>
-        <p className="mt-3 text-sm leading-6 text-slate-800 dark:text-slate-100">{summary.conclusion}</p>
+      <div className={`mt-4 rounded-2xl border-l-4 bg-white/65 p-4 dark:bg-black/20 ${tone.border}`}>
+        <div className="text-xs font-black uppercase tracking-wide opacity-70">Kết luận bằng lời</div>
+        <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7">{summary.conclusion}</p>
+
         {summary.optimalSegment && (
-          <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100">
+          <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-100">
             Miền nghiệm tối ưu: đoạn thẳng AB với A = ({fmt(summary.optimalSegment.a.x)}, {fmt(summary.optimalSegment.a.y)}) và B = ({fmt(summary.optimalSegment.b.x)}, {fmt(summary.optimalSegment.b.y)}).
           </div>
         )}
@@ -89,11 +177,11 @@ function ResultSummaryView({ result }: { result: SimplexResult }) {
   );
 }
 
-function SummaryBox({ title, value, mono, large }: { title: string; value: string; mono?: boolean; large?: boolean }) {
+function SummaryMetric({ title, value, important = false, valueClassName = 'font-black' }: { title: string; value: string; important?: boolean; valueClassName?: string }) {
   return (
-    <div className="rounded-2xl bg-white p-4 dark:bg-slate-900">
-      <div className="text-xs font-black uppercase tracking-wide text-slate-500">{title}</div>
-      <div className={`mt-2 break-words ${mono ? 'font-mono text-sm' : ''} ${large ? 'text-2xl font-black' : 'font-bold'}`}>{value}</div>
+    <div className="min-w-0 rounded-2xl bg-white/75 p-4 shadow-sm dark:bg-black/20">
+      <div className="text-[11px] font-black uppercase tracking-wide text-slate-500 dark:text-slate-400">{title}</div>
+      <div className={`mt-2 whitespace-pre-wrap break-words leading-6 ${important ? 'text-sm font-black' : valueClassName}`}>{value}</div>
     </div>
   );
 }
@@ -154,5 +242,10 @@ function StandardFormView({ result }: { result: SimplexResult }) {
 }
 
 function Info({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-2xl bg-slate-50 p-3 dark:bg-slate-950"><div className="text-xs uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 truncate font-semibold">{value}</div></div>;
+  return (
+    <div className="min-w-0 rounded-2xl bg-slate-50 p-3 dark:bg-slate-950">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 truncate font-semibold">{value}</div>
+    </div>
+  );
 }

@@ -1,19 +1,32 @@
 import type { StandardModel } from './types';
 import { cleanNumber } from './format';
+import { recoverOriginalSolution } from './standardize';
 
 const EPS = 1e-9;
 
-type DictRow = {
+export type TwoPhaseX0Row = {
   basis: string;
   rhs: number;
   coeffs: Record<string, number>;
 };
 
-type Dictionary = {
+export type TwoPhaseX0Dictionary = {
+  objectiveName: 'delta' | 'z';
   objectiveRhs: number;
   objectiveCoeffs: Record<string, number>;
-  rows: DictRow[];
+  rows: TwoPhaseX0Row[];
   nonBasic: string[];
+};
+
+export type TwoPhasePivotStep = {
+  phase: 'Phase 1' | 'Phase 2';
+  title: string;
+  before: TwoPhaseX0Dictionary;
+  after: TwoPhaseX0Dictionary;
+  entering: string;
+  leaving: string;
+  leavingRow: number;
+  pivotValue: number;
 };
 
 export type TwoPhaseX0Analysis = {
@@ -26,13 +39,45 @@ export type TwoPhaseX0Analysis = {
   solutionOriginal: number[];
   optimalValue: number | null;
   reason: string;
+
+  hasAlternateOptimum: boolean;
+  alternateSolutionOriginal?: number[];
+  alternateEntering?: string;
+
+  standardVariableNames: string[];
+  phaseOneInitial?: TwoPhaseX0Dictionary;
+  phaseOneAfterInitialPivot?: TwoPhaseX0Dictionary;
+  phaseOneFinal?: TwoPhaseX0Dictionary;
+  phaseTwoStart?: TwoPhaseX0Dictionary;
+  phaseTwoFinal?: TwoPhaseX0Dictionary;
+  phaseOnePivotSteps: TwoPhasePivotStep[];
+  phaseTwoPivotSteps: TwoPhasePivotStep[];
+  x0Value?: number;
 };
 
-function originalVariableNames(model: StandardModel): string[] {
-  return Array.from({ length: model.original.n }, (_, i) => `x${i + 1}`);
+function standardVariableNames(model: StandardModel): string[] {
+  return model.mappings.map((mapping) => mapping.label);
 }
 
-function normalizeDict(dict: Dictionary): void {
+function slackName(index: number): string {
+  return `w${index + 1}`;
+}
+
+function cloneDictionary(dict: TwoPhaseX0Dictionary): TwoPhaseX0Dictionary {
+  return {
+    objectiveName: dict.objectiveName,
+    objectiveRhs: dict.objectiveRhs,
+    objectiveCoeffs: { ...dict.objectiveCoeffs },
+    rows: dict.rows.map((row) => ({
+      basis: row.basis,
+      rhs: row.rhs,
+      coeffs: { ...row.coeffs },
+    })),
+    nonBasic: [...dict.nonBasic],
+  };
+}
+
+function normalizeDict(dict: TwoPhaseX0Dictionary): void {
   dict.objectiveRhs = cleanNumber(dict.objectiveRhs);
 
   Object.keys(dict.objectiveCoeffs).forEach((key) => {
@@ -49,27 +94,40 @@ function normalizeDict(dict: Dictionary): void {
   });
 }
 
-function buildAuxiliaryDictionary(model: StandardModel): Dictionary {
-  const xNames = originalVariableNames(model);
-  const nonBasic = [...xNames, 'x0'];
+function buildAuxiliaryDictionary(model: StandardModel): TwoPhaseX0Dictionary {
+  const yNames = standardVariableNames(model);
+  const nonBasic = [...yNames, 'x0'];
 
-  return {
+  const dict: TwoPhaseX0Dictionary = {
+    objectiveName: 'delta',
     objectiveRhs: 0,
     objectiveCoeffs: Object.fromEntries(nonBasic.map((name) => [name, name === 'x0' ? 1 : 0])),
     rows: model.constraints.map((row, i) => {
       const coeffs: Record<string, number> = {};
-      xNames.forEach((name, j) => {
-        // a*x - x0 <= b  =>  w = b - a*x + x0
+
+      yNames.forEach((name, j) => {
+        // Từ dạng chuẩn: a*y <= b.
+        // Bài toán bổ trợ x0: a*y - x0 <= b.
+        // Từ vựng: w = b - a*y + x0.
         coeffs[name] = -(row.a[j] ?? 0);
       });
+
       coeffs.x0 = 1;
-      return { basis: `w${i + 1}`, rhs: row.b, coeffs };
+
+      return {
+        basis: slackName(i),
+        rhs: row.b,
+        coeffs,
+      };
     }),
     nonBasic,
   };
+
+  normalizeDict(dict);
+  return dict;
 }
 
-function pivotDictionary(dict: Dictionary, entering: string, rowIndex: number): void {
+function pivotDictionary(dict: TwoPhaseX0Dictionary, entering: string, rowIndex: number): void {
   const row = dict.rows[rowIndex];
   const leaving = row.basis;
   const pivotValue = row.coeffs[entering] ?? 0;
@@ -83,7 +141,10 @@ function pivotDictionary(dict: Dictionary, entering: string, rowIndex: number): 
   const oldRowCoeffs = { ...row.coeffs };
   const oldRhs = row.rhs;
 
-  const enteringExpression: DictRow = {
+  // Dictionary convention:
+  // basis = rhs + sum(coeff[name] * nonbasic[name])
+  // Solve the leaving row for entering.
+  const enteringExpression: TwoPhaseX0Row = {
     basis: entering,
     rhs: -oldRhs / pivotValue,
     coeffs: {},
@@ -137,7 +198,26 @@ function pivotDictionary(dict: Dictionary, entering: string, rowIndex: number): 
   normalizeDict(dict);
 }
 
-function chooseMostNegativeRhsRow(dict: Dictionary): number | null {
+function pivotWithStep(dict: TwoPhaseX0Dictionary, entering: string, rowIndex: number, phase: 'Phase 1' | 'Phase 2', title: string): TwoPhasePivotStep {
+  const before = cloneDictionary(dict);
+  const leaving = dict.rows[rowIndex].basis;
+  const pivotValue = dict.rows[rowIndex].coeffs[entering] ?? 0;
+
+  pivotDictionary(dict, entering, rowIndex);
+
+  return {
+    phase,
+    title,
+    before,
+    after: cloneDictionary(dict),
+    entering,
+    leaving,
+    leavingRow: rowIndex,
+    pivotValue: cleanNumber(pivotValue),
+  };
+}
+
+function chooseMostNegativeRhsRow(dict: TwoPhaseX0Dictionary): number | null {
   let rowIndex: number | null = null;
   let best = -EPS;
 
@@ -151,7 +231,7 @@ function chooseMostNegativeRhsRow(dict: Dictionary): number | null {
   return rowIndex;
 }
 
-function chooseEnteringForMin(dict: Dictionary): string | null {
+function chooseEnteringForMin(dict: TwoPhaseX0Dictionary): string | null {
   let entering: string | null = null;
   let best = -EPS;
 
@@ -166,7 +246,7 @@ function chooseEnteringForMin(dict: Dictionary): string | null {
   return entering;
 }
 
-function chooseLeavingForEntering(dict: Dictionary, entering: string): number | null {
+function chooseLeavingForEntering(dict: TwoPhaseX0Dictionary, entering: string): number | null {
   let rowIndex: number | null = null;
   let best = Number.POSITIVE_INFINITY;
 
@@ -184,39 +264,29 @@ function chooseLeavingForEntering(dict: Dictionary, entering: string): number | 
   return rowIndex;
 }
 
-function deltaContainsX0(dict: Dictionary): boolean {
-  return dict.nonBasic.includes('x0') && Math.abs(dict.objectiveCoeffs.x0 ?? 0) > EPS;
+function basicValue(dict: TwoPhaseX0Dictionary, variable: string): number {
+  const row = dict.rows.find((item) => item.basis === variable);
+  if (row) return cleanNumber(row.rhs);
+  return 0;
 }
 
-function objectiveCoefficientsMin(model: StandardModel): number[] {
-  const input = model.original;
-  return input.optimization === 'max' ? input.c.map((v) => -v) : [...input.c];
-}
-
-function cloneDictionary(dict: Dictionary): Dictionary {
-  return {
-    objectiveRhs: dict.objectiveRhs,
-    objectiveCoeffs: { ...dict.objectiveCoeffs },
-    rows: dict.rows.map((row) => ({
-      basis: row.basis,
-      rhs: row.rhs,
-      coeffs: { ...row.coeffs },
-    })),
-    nonBasic: [...dict.nonBasic],
-  };
-}
-
-function removeX0FromDictionary(dict: Dictionary): Dictionary {
+function removeX0FromDictionary(dict: TwoPhaseX0Dictionary): TwoPhaseX0Dictionary {
   const out = cloneDictionary(dict);
 
   const basicX0Row = out.rows.findIndex((row) => row.basis === 'x0');
+
   if (basicX0Row >= 0) {
     const replacement = out.nonBasic.find((name) => name !== 'x0' && Math.abs(out.rows[basicX0Row].coeffs[name] ?? 0) > EPS);
-    if (replacement) pivotDictionary(out, replacement, basicX0Row);
+
+    if (replacement) {
+      pivotDictionary(out, replacement, basicX0Row);
+    } else {
+      // x0 = 0 and the row has no useful pivot candidate, so the row is redundant.
+      out.rows.splice(basicX0Row, 1);
+    }
   }
 
   out.nonBasic = out.nonBasic.filter((name) => name !== 'x0');
-  out.rows = out.rows.filter((row) => row.basis !== 'x0');
   out.rows.forEach((row) => delete row.coeffs.x0);
   delete out.objectiveCoeffs.x0;
   normalizeDict(out);
@@ -224,19 +294,22 @@ function removeX0FromDictionary(dict: Dictionary): Dictionary {
   return out;
 }
 
-function restoreOriginalObjective(model: StandardModel, phaseOneFinal: Dictionary): Dictionary {
+function restoreOriginalObjective(model: StandardModel, phaseOneFinal: TwoPhaseX0Dictionary): TwoPhaseX0Dictionary {
   const dict = removeX0FromDictionary(phaseOneFinal);
-  const xNames = originalVariableNames(model);
-  const minCoefs = objectiveCoefficientsMin(model);
+  const yNames = standardVariableNames(model);
 
+  dict.objectiveName = 'z';
   dict.objectiveRhs = 0;
   dict.objectiveCoeffs = Object.fromEntries(dict.nonBasic.map((name) => [name, 0]));
 
-  xNames.forEach((name, index) => {
-    const cost = minCoefs[index] ?? 0;
+  yNames.forEach((name, index) => {
+    // IMPORTANT: Pha 2 phải khôi phục hàm mục tiêu theo biến chuẩn,
+    // nên dùng model.c, không dùng model.original.c.
+    const cost = model.c[index] ?? 0;
     if (Math.abs(cost) < EPS) return;
 
     const basicRow = dict.rows.find((row) => row.basis === name);
+
     if (basicRow) {
       dict.objectiveRhs += cost * basicRow.rhs;
       dict.nonBasic.forEach((nonBasic) => {
@@ -251,31 +324,107 @@ function restoreOriginalObjective(model: StandardModel, phaseOneFinal: Dictionar
   return dict;
 }
 
-function runDictionarySimplex(dict: Dictionary): { status: 'optimal' | 'unbounded'; finalDict: Dictionary } {
+function runDictionarySimplex(dict: TwoPhaseX0Dictionary, phase: 'Phase 1' | 'Phase 2'): { status: 'optimal' | 'unbounded'; finalDict: TwoPhaseX0Dictionary; pivotSteps: TwoPhasePivotStep[] } {
+  const pivotSteps: TwoPhasePivotStep[] = [];
+
   for (let guard = 0; guard < 100; guard += 1) {
     const entering = chooseEnteringForMin(dict);
-    if (!entering) return { status: 'optimal', finalDict: dict };
+    if (!entering) return { status: 'optimal', finalDict: dict, pivotSteps };
 
     const leavingRow = chooseLeavingForEntering(dict, entering);
-    if (leavingRow == null) return { status: 'unbounded', finalDict: dict };
+    if (leavingRow == null) return { status: 'unbounded', finalDict: dict, pivotSteps };
 
-    pivotDictionary(dict, entering, leavingRow);
+    pivotSteps.push(pivotWithStep(dict, entering, leavingRow, phase, `${entering} vào, ${dict.rows[leavingRow]?.basis ?? ''} ra`));
   }
 
-  return { status: 'optimal', finalDict: dict };
+  return { status: 'optimal', finalDict: dict, pivotSteps };
 }
 
-function collectOriginalSolution(model: StandardModel, dict: Dictionary): number[] {
-  const names = originalVariableNames(model);
+function collectStandardSolution(model: StandardModel, dict: TwoPhaseX0Dictionary): number[] {
+  return standardVariableNames(model).map((name) => basicValue(dict, name));
+}
 
-  return names.map((name) => {
-    const row = dict.rows.find((item) => item.basis === name);
-    return cleanNumber(row?.rhs ?? 0);
+function solutionDistance(a: number[], b: number[]): number {
+  const size = Math.max(a.length, b.length);
+  let distance = 0;
+
+  for (let i = 0; i < size; i += 1) {
+    distance = Math.max(distance, Math.abs((a[i] ?? 0) - (b[i] ?? 0)));
+  }
+
+  return distance;
+}
+
+function trialSolutionFromFinalDictionary(model: StandardModel, dict: TwoPhaseX0Dictionary, entering: string, step: number): number[] {
+  const yNames = standardVariableNames(model);
+
+  return yNames.map((name) => {
+    if (name === entering && dict.nonBasic.includes(name)) {
+      return cleanNumber(step);
+    }
+
+    const basicRow = dict.rows.find((row) => row.basis === name);
+    if (basicRow) {
+      return cleanNumber(basicRow.rhs + (basicRow.coeffs[entering] ?? 0) * step);
+    }
+
+    return 0;
   });
+}
+
+function feasibleStepForNonBasic(dict: TwoPhaseX0Dictionary, entering: string): number | null {
+  let upper = Number.POSITIVE_INFINITY;
+
+  for (const row of dict.rows) {
+    const coeff = row.coeffs[entering] ?? 0;
+
+    if (coeff < -EPS) {
+      upper = Math.min(upper, row.rhs / -coeff);
+    }
+  }
+
+  if (upper <= EPS) return null;
+  if (!Number.isFinite(upper)) return 1;
+
+  return Math.min(1, upper);
+}
+
+function findAlternateOptimum(model: StandardModel, dict: TwoPhaseX0Dictionary, solutionOriginal: number[]): { hasAlternateOptimum: boolean; alternateSolutionOriginal?: number[]; alternateEntering?: string } {
+  // Chỉ hậu kiểm khi đã có từ vựng tối ưu Pha 2.
+  // Không can thiệp quá trình giải và không pivot thật trên từ vựng tối ưu cuối.
+  for (const entering of dict.nonBasic) {
+    if (entering === 'x0') continue;
+
+    // Điều kiện 1: hệ số của biến không cơ sở trong hàng z bằng 0.
+    if (Math.abs(dict.objectiveCoeffs[entering] ?? 0) > EPS) continue;
+
+    // Điều kiện 2: các hàng cơ sở bên dưới có phụ thuộc vào biến này.
+    const affectsRows = dict.rows.some((row) => Math.abs(row.coeffs[entering] ?? 0) > EPS);
+    if (!affectsRows) continue;
+
+    // Điều kiện 3: có thể tăng biến không cơ sở một lượng dương mà vẫn khả thi.
+    const step = feasibleStepForNonBasic(dict, entering);
+    if (step == null) continue;
+
+    // Điều kiện 4: nghiệm gốc khôi phục bằng mappings phải khác nghiệm đại diện.
+    const alternateStandard = trialSolutionFromFinalDictionary(model, dict, entering, step);
+    const alternateOriginal = recoverOriginalSolution(alternateStandard, model);
+
+    if (solutionDistance(alternateOriginal, solutionOriginal) > 1e-7) {
+      return {
+        hasAlternateOptimum: true,
+        alternateSolutionOriginal: alternateOriginal,
+        alternateEntering: entering,
+      };
+    }
+  }
+
+  return { hasAlternateOptimum: false };
 }
 
 export function analyzeTwoPhaseX0(model: StandardModel): TwoPhaseX0Analysis {
   const hasNegativeRhs = model.constraints.some((row) => row.b < -EPS);
+  const standardNames = standardVariableNames(model);
 
   if (!hasNegativeRhs) {
     return {
@@ -288,29 +437,30 @@ export function analyzeTwoPhaseX0(model: StandardModel): TwoPhaseX0Analysis {
       solutionOriginal: [],
       optimalValue: null,
       reason: 'Sau chuẩn hóa không có b_i < 0 nên không cần Pha 1.',
+      hasAlternateOptimum: false,
+      standardVariableNames: standardNames,
+      phaseOnePivotSteps: [],
+      phaseTwoPivotSteps: [],
     };
   }
 
-  const dict = buildAuxiliaryDictionary(model);
-  const negativeRow = chooseMostNegativeRhsRow(dict);
+  const phaseOneInitial = buildAuxiliaryDictionary(model);
+  const phaseOneWorking = cloneDictionary(phaseOneInitial);
+  const phaseOneInitialPivotSteps: TwoPhasePivotStep[] = [];
+  let phaseOneAfterInitialPivot: TwoPhaseX0Dictionary | undefined;
 
+  const negativeRow = chooseMostNegativeRhsRow(phaseOneWorking);
   if (negativeRow != null) {
-    pivotDictionary(dict, 'x0', negativeRow);
+    phaseOneInitialPivotSteps.push(pivotWithStep(phaseOneWorking, 'x0', negativeRow, 'Phase 1', 'x0 vào hàng có RHS âm'));
+    phaseOneAfterInitialPivot = cloneDictionary(phaseOneWorking);
   }
 
-  for (let guard = 0; guard < 100; guard += 1) {
-    const entering = chooseEnteringForMin(dict);
-    if (!entering) break;
+  const phaseOne = runDictionarySimplex(phaseOneWorking, 'Phase 1');
+  const phaseOneFinal = cloneDictionary(phaseOne.finalDict);
+  const phaseOnePivotSteps = [...phaseOneInitialPivotSteps, ...phaseOne.pivotSteps];
+  const x0Value = basicValue(phaseOneFinal, 'x0');
 
-    const leavingRow = chooseLeavingForEntering(dict, entering);
-    if (leavingRow == null) break;
-
-    pivotDictionary(dict, entering, leavingRow);
-  }
-
-  const canGoToPhaseTwo = deltaContainsX0(dict);
-
-  if (!canGoToPhaseTwo) {
+  if (x0Value > EPS) {
     return {
       hasNegativeRhs: true,
       canGoToPhaseTwo: false,
@@ -320,12 +470,21 @@ export function analyzeTwoPhaseX0(model: StandardModel): TwoPhaseX0Analysis {
       solutionStandard: [],
       solutionOriginal: [],
       optimalValue: null,
-      reason: 'Hàng delta của từ vựng tối ưu Pha 1 không còn chứa x0, nên bài toán gốc vô nghiệm theo quy tắc Two-Phase x0.',
+      reason: `Tại từ vựng tối ưu Pha 1, x₀* = ${cleanNumber(x0Value)} > 0 nên bài toán gốc vô nghiệm.`,
+      hasAlternateOptimum: false,
+      standardVariableNames: standardNames,
+      phaseOneInitial,
+      phaseOneAfterInitialPivot,
+      phaseOneFinal,
+      phaseOnePivotSteps,
+      phaseTwoPivotSteps: [],
+      x0Value,
     };
   }
 
-  const phaseTwoStart = restoreOriginalObjective(model, dict);
-  const phaseTwo = runDictionarySimplex(phaseTwoStart);
+  const phaseTwoStart = restoreOriginalObjective(model, phaseOneFinal);
+  const phaseTwo = runDictionarySimplex(cloneDictionary(phaseTwoStart), 'Phase 2');
+  const phaseTwoFinal = cloneDictionary(phaseTwo.finalDict);
 
   if (phaseTwo.status === 'unbounded') {
     return {
@@ -337,13 +496,25 @@ export function analyzeTwoPhaseX0(model: StandardModel): TwoPhaseX0Analysis {
       solutionStandard: [],
       solutionOriginal: [],
       optimalValue: null,
-      reason: 'Pha 2 không có hàng rời hợp lệ, nên bài toán không giới nội.',
+      reason: 'Pha 2 không có hàng rời hợp lệ nên bài toán không giới nội.',
+      hasAlternateOptimum: false,
+      standardVariableNames: standardNames,
+      phaseOneInitial,
+      phaseOneAfterInitialPivot,
+      phaseOneFinal,
+      phaseTwoStart,
+      phaseTwoFinal,
+      phaseOnePivotSteps,
+      phaseTwoPivotSteps: phaseTwo.pivotSteps,
+      x0Value,
     };
   }
 
-  const solutionOriginal = collectOriginalSolution(model, phaseTwo.finalDict);
-  const minValue = cleanNumber(phaseTwo.finalDict.objectiveRhs);
+  const solutionStandard = collectStandardSolution(model, phaseTwoFinal);
+  const solutionOriginal = recoverOriginalSolution(solutionStandard, model);
+  const minValue = cleanNumber(phaseTwoFinal.objectiveRhs);
   const optimalValue = model.original.optimization === 'max' ? cleanNumber(-minValue) : minValue;
+  const alternate = findAlternateOptimum(model, phaseTwoFinal, solutionOriginal);
 
   return {
     hasNegativeRhs: true,
@@ -351,9 +522,23 @@ export function analyzeTwoPhaseX0(model: StandardModel): TwoPhaseX0Analysis {
     phaseOneInfeasible: false,
     phaseTwoUnbounded: false,
     status: 'optimal',
-    solutionStandard: [...solutionOriginal],
+    solutionStandard,
     solutionOriginal,
     optimalValue,
-    reason: 'Pha 2 đã tối ưu. Nghiệm được lấy từ RHS của các biến cơ sở trong từ vựng tối ưu Pha 2.',
+    reason: alternate.hasAlternateOptimum
+      ? 'Pha 2 tối ưu. Từ vựng tối ưu còn biến không cơ sở có hệ số 0 trong hàng z, các hàng bên dưới phụ thuộc vào biến đó và khi thay đổi biến này nghiệm gốc khôi phục bằng mappings khác nghiệm đại diện, nên bài toán có vô số nghiệm tối ưu.'
+      : 'Pha 1 cho x₀* = 0 nên bài toán gốc khả thi. Pha 2 đã tối ưu trên đúng hệ biến chuẩn và nghiệm gốc được khôi phục bằng mappings.',
+    hasAlternateOptimum: alternate.hasAlternateOptimum,
+    alternateSolutionOriginal: alternate.alternateSolutionOriginal,
+    alternateEntering: alternate.alternateEntering,
+    standardVariableNames: standardNames,
+    phaseOneInitial,
+    phaseOneAfterInitialPivot,
+    phaseOneFinal,
+    phaseTwoStart,
+    phaseTwoFinal,
+    phaseOnePivotSteps,
+    phaseTwoPivotSteps: phaseTwo.pivotSteps,
+    x0Value,
   };
 }
