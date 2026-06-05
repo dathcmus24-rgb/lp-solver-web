@@ -31,7 +31,13 @@ function checkCase(name: string, input: LPInput): void {
 
   if (x0.status === 'infeasible') {
     assert(summary.solutionText === 'Không có nghiệm khả thi', `${name}: infeasible summary must not show an optimal solution.`);
-    assert(summary.conclusion.includes('không còn chứa x₀'), `${name}: infeasible conclusion must mention the x0 delta rule.`);
+    const conclusion = summary.conclusion.toLowerCase();
+    assert(
+      (conclusion.includes('x₀') || conclusion.includes('x0')) &&
+        conclusion.includes('> 0') &&
+        conclusion.includes('vô nghiệm'),
+      `${name}: infeasible conclusion must mention the Phase 1 rule x0 > 0 implies infeasible. Got: "${summary.conclusion}".`,
+    );
   }
 
   if (x0.status === 'optimal') {

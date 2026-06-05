@@ -57,9 +57,9 @@ const unbounded: LPInput = {
 
 const unboundedResult = solveLP(unbounded, 'simplex');
 const unboundedSummary = buildResultSummary(unboundedResult);
-assert(unboundedSummary.statusText === 'Không bị chặn', 'Phải tóm tắt trạng thái không bị chặn');
+assert(unboundedSummary.statusText === 'Không giới nội', 'Phải tóm tắt trạng thái không giới nội');
 
 console.log('✓ Summary nhận diện vô số nghiệm và đoạn AB');
 console.log('✓ Summary nhận diện vô nghiệm/error');
-console.log('✓ Summary nhận diện không bị chặn');
+console.log('✓ Summary nhận diện không giới nội');
 console.log('All summary tests passed.');

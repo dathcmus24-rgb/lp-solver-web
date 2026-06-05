@@ -2,7 +2,7 @@ import type { StandardModel } from './types';
 import { cleanNumber } from './format';
 import { recoverOriginalSolution } from './standardize';
 
-const EPS = 1e-9;
+const EPS = 1e-10;
 
 export type TwoPhaseX0Row = {
   basis: string;
@@ -82,14 +82,14 @@ function normalizeDict(dict: TwoPhaseX0Dictionary): void {
 
   Object.keys(dict.objectiveCoeffs).forEach((key) => {
     dict.objectiveCoeffs[key] = cleanNumber(dict.objectiveCoeffs[key]);
-    if (Math.abs(dict.objectiveCoeffs[key]) < EPS) dict.objectiveCoeffs[key] = 0;
+    if (Math.abs(dict.objectiveCoeffs[key]) <= EPS) dict.objectiveCoeffs[key] = 0;
   });
 
   dict.rows.forEach((row) => {
     row.rhs = cleanNumber(row.rhs);
     Object.keys(row.coeffs).forEach((key) => {
       row.coeffs[key] = cleanNumber(row.coeffs[key]);
-      if (Math.abs(row.coeffs[key]) < EPS) row.coeffs[key] = 0;
+      if (Math.abs(row.coeffs[key]) <= EPS) row.coeffs[key] = 0;
     });
   });
 }
@@ -246,22 +246,42 @@ function chooseEnteringForMin(dict: TwoPhaseX0Dictionary): string | null {
   return entering;
 }
 
-function chooseLeavingForEntering(dict: TwoPhaseX0Dictionary, entering: string): number | null {
-  let rowIndex: number | null = null;
-  let best = Number.POSITIVE_INFINITY;
+type LeavingCandidate = {
+  rowIndex: number;
+  basis: string;
+  ratio: number;
+};
+
+function chooseLeavingForEntering(dict: TwoPhaseX0Dictionary, entering: string, phase: 'Phase 1' | 'Phase 2'): number | null {
+  const candidates: LeavingCandidate[] = [];
 
   dict.rows.forEach((row, i) => {
     const coeff = row.coeffs[entering] ?? 0;
+
     if (coeff < -EPS) {
-      const ratio = row.rhs / -coeff;
-      if (ratio < best - EPS) {
-        best = ratio;
-        rowIndex = i;
-      }
+      candidates.push({
+        rowIndex: i,
+        basis: row.basis,
+        ratio: row.rhs / -coeff,
+      });
     }
   });
 
-  return rowIndex;
+  if (candidates.length === 0) return null;
+
+  const minRatio = Math.min(...candidates.map((item) => item.ratio));
+  const tied = candidates.filter((item) => Math.abs(item.ratio - minRatio) <= EPS);
+
+  // Phase 1 tie-break:
+  // If x0 is one of the valid minimum-ratio leaving candidates, choose x0 to
+  // leave the basis. This keeps the auxiliary variable out of the basis as
+  // early as possible without breaking the ratio test.
+  if (phase === 'Phase 1') {
+    const x0Candidate = tied.find((item) => item.basis === 'x0');
+    if (x0Candidate) return x0Candidate.rowIndex;
+  }
+
+  return tied[0].rowIndex;
 }
 
 function basicValue(dict: TwoPhaseX0Dictionary, variable: string): number {
@@ -331,7 +351,7 @@ function runDictionarySimplex(dict: TwoPhaseX0Dictionary, phase: 'Phase 1' | 'Ph
     const entering = chooseEnteringForMin(dict);
     if (!entering) return { status: 'optimal', finalDict: dict, pivotSteps };
 
-    const leavingRow = chooseLeavingForEntering(dict, entering);
+    const leavingRow = chooseLeavingForEntering(dict, entering, phase);
     if (leavingRow == null) return { status: 'unbounded', finalDict: dict, pivotSteps };
 
     pivotSteps.push(pivotWithStep(dict, entering, leavingRow, phase, `${entering} vào, ${dict.rows[leavingRow]?.basis ?? ''} ra`));

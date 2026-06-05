@@ -235,6 +235,47 @@ function checkAlternateOptimumPostCheck(): void {
   }
 }
 
+function checkTwoPhaseX0LeavingPriority(): void {
+  const model: StandardModel = {
+    c: [-1, 0],
+    constraints: [
+      { a: [-1, 0], sign: '<=', b: -1, label: 'R1' },
+      { a: [-2, 0], sign: '<=', b: -2, label: 'R2' },
+      { a: [1, 0], sign: '<=', b: 4, label: 'R3' },
+    ],
+    mappings: [
+      { originalIndex: 0, kind: 'same', label: 'x1' },
+      { originalIndex: 1, kind: 'same', label: 'x2' },
+    ],
+    original: {
+      optimization: 'min',
+      n: 2,
+      m: 3,
+      c: [-1, 0],
+      A: [
+        [-1, 0],
+        [-2, 0],
+        [1, 0],
+      ],
+      signs: ['<=', '<=', '<='],
+      b: [-1, -2, 4],
+      variableTypes: ['nonnegative', 'nonnegative'],
+    },
+    latex: '',
+  };
+
+  const analysis = analyzeTwoPhaseX0(model);
+  const phaseOneOptimizationPivot = analysis.phaseOnePivotSteps?.find((step) => step.phase === 'Phase 1' && step.entering !== 'x0');
+
+  assertAudit(
+    phaseOneOptimizationPivot?.leaving === 'x0',
+    'Two-Phase x0 priority',
+    'Minimum-ratio tie with x0 in Phase 1',
+    `When x0 ties in the minimum-ratio test, x0 should leave. Got leaving=${phaseOneOptimizationPivot?.leaving ?? 'none'}.`,
+  );
+}
+
+
 function checkGeometricCrossValidation(): void {
   for (const example of lpExamples) {
     if (example.input.n !== 2) continue;
@@ -312,5 +353,6 @@ checkTwoPhaseSummarySync();
 checkResultSummaryConsistency();
 checkStandardToPhaseOneConsistency();
 checkAlternateOptimumPostCheck();
+checkTwoPhaseX0LeavingPriority();
 checkGeometricCrossValidation();
 printReport();

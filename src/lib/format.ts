@@ -1,11 +1,13 @@
 import type { ConstraintSign } from './types';
 
-export const EPS = 1e-9;
-export const nearlyZero = (x: number): boolean => Math.abs(x) < EPS;
+export const EPS = 1e-10;
+export const nearlyZero = (x: number): boolean => Math.abs(x) <= EPS;
 export const cloneMatrix = (matrix: number[][]): number[][] => matrix.map((row) => [...row]);
 
 export function cleanNumber(x: number): number {
-  return nearlyZero(x) ? 0 : Number(x.toFixed(10));
+  // Internal cleanup must not round meaningful decimals.
+  // It only removes floating-point noise extremely close to zero.
+  return nearlyZero(x) ? 0 : x;
 }
 
 export function fmt(x: number, digits = 4): string {
@@ -28,31 +30,38 @@ export function signToLatex(sign: ConstraintSign): string {
 
 export function linearLatex(coeffs: number[], names: string[]): string {
   const parts: string[] = [];
+
   coeffs.forEach((coef, i) => {
     if (nearlyZero(coef)) return;
+
     const abs = Math.abs(coef);
     const term = `${abs === 1 ? '' : fmt(abs)}${names[i] ?? `x_${i + 1}`}`;
-    if (parts.length === 0) parts.push(coef < 0 ? `-${term}` : term);
-    else parts.push(coef < 0 ? `- ${term}` : `+ ${term}`);
+
+    if (parts.length === 0) {
+      parts.push(coef < 0 ? `-${term}` : term);
+    } else {
+      parts.push(coef < 0 ? `- ${term}` : `+ ${term}`);
+    }
   });
+
   return parts.length ? parts.join(' ') : '0';
 }
 
 export function varNameToLatex(name: string): string {
   const match = name.match(/^([a-zA-Z]+)(\d+)(?:\^([+-]))?$/);
+
   if (match) {
-    const [_, letter, index, sup] = match;
+    const [, letter, index, sup] = match;
     const supPart = sup ? `^{${sup}}` : '';
     return `${letter}_{${index}}${supPart}`;
   }
+
   return name.replace(/\^\+/g, '^{+}').replace(/\^-/g, '^{-}');
 }
 
 export function formatVarNameHtml(name: string): string {
   return name
-    .replace(/\d+/g, (num) =>
-      num.split('').map((digit) => '₀₁₂₃₄₅₆₇₈₉'[parseInt(digit, 10)]).join('')
-    )
+    .replace(/\d+/g, (num) => num.split('').map((digit) => '₀₁₂₃₄₅₆₇₈₉'[parseInt(digit, 10)]).join(''))
     .replace(/\^\+/g, '⁺')
     .replace(/\^-/g, '⁻');
 }

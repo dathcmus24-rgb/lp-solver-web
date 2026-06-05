@@ -67,14 +67,21 @@ function ratioTest(tableau: number[][], basis: number[], col: number, bland: boo
 function pivot(tableau: number[][], basis: number[], row: number, col: number): void {
   const rhs = tableau[0].length - 1;
   const pivotValue = tableau[row][col];
-  for (let j = 0; j <= rhs; j += 1) tableau[row][j] /= pivotValue;
+
+  for (let j = 0; j <= rhs; j += 1) {
+    tableau[row][j] = cleanNumber(tableau[row][j] / pivotValue);
+  }
 
   for (let i = 0; i < tableau.length; i += 1) {
     if (i === row) continue;
     const factor = tableau[i][col];
     if (nearlyZero(factor)) continue;
-    for (let j = 0; j <= rhs; j += 1) tableau[i][j] -= factor * tableau[row][j];
+
+    for (let j = 0; j <= rhs; j += 1) {
+      tableau[i][j] = cleanNumber(tableau[i][j] - factor * tableau[row][j]);
+    }
   }
+
   basis[row - 1] = col;
 }
 
@@ -263,11 +270,42 @@ function removeArtificialAndSetPhaseTwo(state: TableauState, costs: number[]): b
   return true;
 }
 
+function hasPositiveAlternateMove(tableau: number[][], col: number): boolean {
+  const rhs = tableau[0].length - 1;
+  let maxStep = Number.POSITIVE_INFINITY;
+  let hasLimiter = false;
+
+  for (let i = 1; i < tableau.length; i += 1) {
+    const a = tableau[i][col];
+
+    // Use the same sign convention as ratioTest: only a > EPS limits an
+    // increase of the non-basic variable. Rows with a <= EPS do not block a
+    // positive move in this tableau convention.
+    if (a > EPS) {
+      hasLimiter = true;
+      maxStep = Math.min(maxStep, tableau[i][rhs] / a);
+    }
+  }
+
+  // No limiting row means the zero-reduced-cost direction can move positively
+  // without changing the objective value.
+  if (!hasLimiter) return true;
+
+  // In a degenerate optimum, every limiting ratio may be 0. Then the tableau
+  // has a zero reduced cost, but it does not produce a distinct feasible
+  // optimum by increasing this variable.
+  return maxStep > EPS;
+}
+
 function hasAlternateOptimum(tableau: number[][], basis: number[], originalCount: number): boolean {
   const basic = new Set(basis);
+
   for (let j = 0; j < originalCount; j += 1) {
-    if (!basic.has(j) && nearlyZero(tableau[0][j])) return true;
+    if (basic.has(j)) continue;
+    if (!nearlyZero(tableau[0][j])) continue;
+    if (hasPositiveAlternateMove(tableau, j)) return true;
   }
+
   return false;
 }
 
@@ -289,11 +327,11 @@ function validateOriginalFeasibility(input: import('./types').LPInput, solution:
       return { ok: false, reason: `Biến x${j + 1} có giá trị không hợp lệ.` };
     }
 
-    if (type === 'nonnegative' && value < -1e-7) {
+    if (type === 'nonnegative' && value < -EPS) {
       return { ok: false, reason: `Biến x${j + 1} = ${cleanNumber(value)} vi phạm điều kiện x${j + 1} ≥ 0.` };
     }
 
-    if (type === 'nonpositive' && value > 1e-7) {
+    if (type === 'nonpositive' && value > EPS) {
       return { ok: false, reason: `Biến x${j + 1} = ${cleanNumber(value)} vi phạm điều kiện x${j + 1} ≤ 0.` };
     }
   }
@@ -303,21 +341,21 @@ function validateOriginalFeasibility(input: import('./types').LPInput, solution:
     const rhs = input.b[i] ?? 0;
     const sign = input.signs[i];
 
-    if (sign === '<=' && lhs > rhs + 1e-7) {
+    if (sign === '<=' && lhs > rhs + EPS) {
       return {
         ok: false,
         reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} > RHS = ${cleanNumber(rhs)}.`,
       };
     }
 
-    if (sign === '>=' && lhs < rhs - 1e-7) {
+    if (sign === '>=' && lhs < rhs - EPS) {
       return {
         ok: false,
         reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} < RHS = ${cleanNumber(rhs)}.`,
       };
     }
 
-    if (sign === '=' && Math.abs(lhs - rhs) > 1e-7) {
+    if (sign === '=' && Math.abs(lhs - rhs) > EPS) {
       return {
         ok: false,
         reason: `Ràng buộc R${i + 1} bị vi phạm: LHS = ${cleanNumber(lhs)} khác RHS = ${cleanNumber(rhs)}.`,
