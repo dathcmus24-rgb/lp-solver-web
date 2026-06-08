@@ -319,6 +319,81 @@ function checkGeometricCrossValidation(): void {
   }
 }
 
+function checkGeometryOptimalLineRobustness(): void {
+  const freeStrip: LPInput = {
+    optimization: 'max',
+    n: 2,
+    m: 2,
+    c: [2, -4],
+    A: [
+      [1, -2],
+      [-1, 2],
+    ],
+    signs: ['<=', '<='],
+    b: [5, 3],
+    variableTypes: ['free', 'free'],
+  };
+
+  const geom = solveGeometric(freeStrip);
+  const summary = buildResultSummary(solveLP(freeStrip, 'geometric'));
+
+  assertAudit(
+    geom.status === 'optimal' &&
+      geom.optimalLine != null &&
+      geom.optimalPoint == null &&
+      approx(geom.optimalLine.value, 10, 1e-6),
+    'Geometry robustness',
+    'Miền khả thi không có đỉnh hữu hạn',
+    `Expected optimalLine with max z = 10 and no fake optimalPoint, got status=${geom.status}, optimalPoint=${geom.optimalPoint ? 'present' : 'null'}, value=${geom.optimalLine?.value ?? 'null'}.`,
+  );
+
+  assertAudit(
+    summary.solutionText.includes('Vô số nghiệm tối ưu trên đường') &&
+      !summary.solutionText.includes('x1 = 0, x2 = 0') &&
+      summary.optimalValueText === 'max z = 10',
+    'Geometry robustness',
+    'Summary cho nghiệm tối ưu dạng đường',
+    `Expected line-optimum summary without fake witness. solutionText="${summary.solutionText}", optimalValueText="${summary.optimalValueText}".`,
+  );
+}
+
+
+function checkGeometryOptimalRayRobustness(): void {
+  const optimalRayCase: LPInput = {
+    optimization: 'max',
+    n: 2,
+    m: 3,
+    c: [3, 3],
+    A: [
+      [1, 1],
+      [-1, -1],
+      [1, -1],
+    ],
+    signs: ['<=', '<=', '<='],
+    b: [4, -2, 2],
+    variableTypes: ['free', 'free'],
+  };
+
+  const geom = solveGeometric(optimalRayCase);
+  const summary = buildResultSummary(solveLP(optimalRayCase, 'geometric'));
+
+  assertAudit(
+    geom.status === 'optimal' && geom.optimalRay != null && approx(geom.optimalRay.value, 12, 1e-6),
+    'Geometry robustness',
+    'Nghiệm tối ưu dạng tia',
+    `Expected optimalRay with max z = 12, got status=${geom.status}, value=${geom.optimalRay?.value ?? 'null'}.`,
+  );
+
+  assertAudit(
+    summary.solutionText.includes('Vô số nghiệm tối ưu trên tia') &&
+      summary.optimalValueText === 'max z = 12' &&
+      !summary.conclusion.includes('duy nhất'),
+    'Geometry robustness',
+    'Summary cho nghiệm tối ưu dạng tia',
+    `Expected ray-optimum summary. solutionText="${summary.solutionText}", optimalValueText="${summary.optimalValueText}", conclusion="${summary.conclusion}".`,
+  );
+}
+
 function printReport(): void {
   const grouped = new Map<string, AuditItem[]>();
   for (const item of items) {
@@ -355,4 +430,6 @@ checkStandardToPhaseOneConsistency();
 checkAlternateOptimumPostCheck();
 checkTwoPhaseX0LeavingPriority();
 checkGeometricCrossValidation();
+checkGeometryOptimalLineRobustness();
+checkGeometryOptimalRayRobustness();
 printReport();

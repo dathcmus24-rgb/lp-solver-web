@@ -34,6 +34,8 @@ export function TableauView({ step }: { step: TableauStep }) {
   const getDisplayValue = (rowIndex: number, colIndex: number): number => {
     const value = step.tableau[rowIndex][colIndex];
 
+    if (rowIndex === 0 && colIndex === rhsCol) return -value;
+
     // Dạng từ vựng: biến cơ sở = RHS - hệ số * biến không cơ sở.
     if (rowIndex > 0 && colIndex !== rhsCol) return -value;
 

@@ -88,12 +88,30 @@ export interface Point2D {
   value: number;
 }
 
+export interface GeometryOptimalLine {
+  a: number;
+  b: number;
+  rhs: number;
+  value: number;
+  label?: string;
+}
+
+export interface GeometryOptimalRay {
+  start: Point2D;
+  dx: number;
+  dy: number;
+  value: number;
+  lineLabel?: string;
+}
+
 export interface GeometryResult {
   supported: boolean;
   lines: GeometryLine[];
   feasiblePoints: Point2D[];
   optimalPoint: Point2D | null;
   optimalSegment?: { a: Point2D; b: Point2D };
+  optimalLine?: GeometryOptimalLine;
+  optimalRay?: GeometryOptimalRay;
   status: SolveStatus;
   message: string;
 }

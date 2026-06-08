@@ -373,41 +373,95 @@ export function solveLP(input: import('./types').LPInput, method: SolveMethod): 
   const variableNames = standard.mappings.map((m) => m.label);
 
   if (method === 'geometric') {
-    const geom = solveGeometric(input);
-    if (geom.supported && geom.optimalPoint) {
-      return {
-        status: geom.status,
-        method,
-        standard,
-        variableNames: ['x1', 'x2'],
-        basisNames: [],
-        steps,
-        solutionStandard: [geom.optimalPoint.x, geom.optimalPoint.y],
-        solutionOriginal: [geom.optimalPoint.x, geom.optimalPoint.y],
-        optimalValue: geom.optimalPoint.value,
+  const geom = solveGeometric(input);
+  const hasAlternate = Boolean(geom.optimalSegment || geom.optimalLine || geom.optimalRay);
+
+  if (geom.supported && geom.optimalLine) {
+    return {
+      status: geom.status,
+      method,
+      standard,
+      variableNames: ['x1', 'x2'],
+      basisNames: [],
+      steps,
+      solutionStandard: [],
+      solutionOriginal: [],
+      optimalValue: geom.optimalLine.value,
+      isDegenerate: false,
+      hasAlternateOptimum: hasAlternate,
+      diagnostics: {
         isDegenerate: false,
-        hasAlternateOptimum: Boolean(geom.optimalSegment),
-        diagnostics: { isDegenerate: false, hasAlternateOptimum: Boolean(geom.optimalSegment), isCyclingRisk: false },
-        message: geom.message,
-      };
-    } else {
-      return {
-        status: geom.status,
-        method,
-        standard,
-        variableNames: ['x1', 'x2'],
-        basisNames: [],
-        steps,
-        solutionStandard: [],
-        solutionOriginal: [],
-        optimalValue: null,
-        isDegenerate: false,
-        hasAlternateOptimum: false,
-        diagnostics: { isDegenerate: false, hasAlternateOptimum: false, isCyclingRisk: false },
-        message: geom.message,
-      };
-    }
+        hasAlternateOptimum: hasAlternate,
+        isCyclingRisk: false,
+      },
+      message: geom.message,
+    };
   }
+
+  if (geom.supported && geom.optimalRay) {
+    return {
+      status: geom.status,
+      method,
+      standard,
+      variableNames: ['x1', 'x2'],
+      basisNames: [],
+      steps,
+      solutionStandard: [],
+      solutionOriginal: [],
+      optimalValue: geom.optimalRay.value,
+      isDegenerate: false,
+      hasAlternateOptimum: hasAlternate,
+      diagnostics: {
+        isDegenerate: false,
+        hasAlternateOptimum: hasAlternate,
+        isCyclingRisk: false,
+      },
+      message: geom.message,
+    };
+  }
+
+  if (geom.supported && geom.optimalPoint) {
+    return {
+      status: geom.status,
+      method,
+      standard,
+      variableNames: ['x1', 'x2'],
+      basisNames: [],
+      steps,
+      solutionStandard: [geom.optimalPoint.x, geom.optimalPoint.y],
+      solutionOriginal: [geom.optimalPoint.x, geom.optimalPoint.y],
+      optimalValue: geom.optimalPoint.value,
+      isDegenerate: false,
+      hasAlternateOptimum: hasAlternate,
+      diagnostics: {
+        isDegenerate: false,
+        hasAlternateOptimum: hasAlternate,
+        isCyclingRisk: false,
+      },
+      message: geom.message,
+    };
+  }
+
+  return {
+    status: geom.status,
+    method,
+    standard,
+    variableNames: ['x1', 'x2'],
+    basisNames: [],
+    steps,
+    solutionStandard: [],
+    solutionOriginal: [],
+    optimalValue: null,
+    isDegenerate: false,
+    hasAlternateOptimum: false,
+    diagnostics: {
+      isDegenerate: false,
+      hasAlternateOptimum: false,
+      isCyclingRisk: false,
+    },
+    message: geom.message,
+  };
+}
 
   let state: TableauState | null = null;
   let loopStatus: 'optimal' | 'unbounded' | 'iteration-limit' = 'optimal';

@@ -1,4 +1,4 @@
-import type { SimplexResult, SolveMethod } from './types';
+import type { GeometryOptimalLine, GeometryOptimalRay, SimplexResult, SolveMethod } from './types';
 import { fmt } from './format';
 import { solveGeometric } from './geometry';
 import { analyzeTwoPhaseX0, type TwoPhaseX0Analysis } from './twoPhaseX0';
@@ -13,6 +13,8 @@ export interface ResultSummary {
     a: { x: number; y: number };
     b: { x: number; y: number };
   };
+  optimalLine?: GeometryOptimalLine;
+  optimalRay?: GeometryOptimalRay;
 }
 
 const methodLabels: Record<SolveMethod, string> = {
@@ -134,12 +136,50 @@ function findOptimalSegment(result: SimplexResult): ResultSummary['optimalSegmen
   return bestPair;
 }
 
-function solutionText(result: SimplexResult, optimalSegment?: ResultSummary['optimalSegment']): string {
+function findOptimalLine(result: SimplexResult): GeometryOptimalLine | undefined {
+  if (result.status !== 'optimal') return undefined;
+  if (result.standard.original.n !== 2) return undefined;
+
+  const geom = solveGeometric(result.standard.original);
+  return geom.optimalLine;
+}
+
+function optimalLineText(line: GeometryOptimalLine): string {
+  return line.label ?? `${fmt(line.a)}x1 + ${fmt(line.b)}x2 = ${fmt(line.rhs)}`;
+}
+
+function findOptimalRay(result: SimplexResult): GeometryOptimalRay | undefined {
+  if (result.status !== 'optimal') return undefined;
+  if (result.standard.original.n !== 2) return undefined;
+
+  const geom = solveGeometric(result.standard.original);
+  return geom.optimalRay;
+}
+
+function optimalRayText(ray: GeometryOptimalRay): string {
+  const line = ray.lineLabel ? ` thuộc đường ${ray.lineLabel}` : '';
+  return `Vô số nghiệm tối ưu trên tia${line}, bắt đầu tại A = (${fmt(ray.start.x)}, ${fmt(ray.start.y)})`;
+}
+
+function solutionText(
+  result: SimplexResult,
+  optimalSegment?: ResultSummary['optimalSegment'],
+  optimalLine?: GeometryOptimalLine,
+  optimalRay?: GeometryOptimalRay,
+): string {
   if (result.status === 'infeasible') return 'Không có nghiệm khả thi';
   if (result.status === 'unbounded') return 'Không có nghiệm tối ưu hữu hạn';
   if (result.status !== 'optimal') return '—';
 
   if (result.hasAlternateOptimum) {
+    if (optimalLine) {
+      return `Vô số nghiệm tối ưu trên đường ${optimalLineText(optimalLine)}`;
+    }
+
+    if (optimalRay) {
+      return optimalRayText(optimalRay);
+    }
+
     if (optimalSegment) {
       return `Vô số nghiệm trên đoạn AB, A = (${fmt(optimalSegment.a.x)}, ${fmt(optimalSegment.a.y)}), B = (${fmt(optimalSegment.b.x)}, ${fmt(optimalSegment.b.y)})`;
     }
@@ -217,13 +257,19 @@ export function buildResultSummary(result: SimplexResult): ResultSummary {
   }
 
   const optimalSegment = findOptimalSegment(result);
+  const optimalLine = findOptimalLine(result);
+  const optimalRay = findOptimalRay(result);
   const prefix = objectivePrefix(result);
   const valueText = objectiveValueText(result);
   let conclusion = result.message;
 
   if (result.status === 'optimal') {
     if (result.hasAlternateOptimum) {
-      if (optimalSegment) {
+      if (optimalLine) {
+        conclusion = `Bài toán có vô số nghiệm tối ưu trên đường ${optimalLineText(optimalLine)}. Giá trị tối ưu của hàm mục tiêu là ${valueText}.`;
+      } else if (optimalRay) {
+        conclusion = `${optimalRayText(optimalRay)}. Giá trị tối ưu của hàm mục tiêu là ${valueText}.`;
+      } else if (optimalSegment) {
         conclusion = `Bài toán có vô số nghiệm tối ưu. Miền nghiệm tối ưu là đoạn thẳng AB với A = (${fmt(optimalSegment.a.x)}, ${fmt(optimalSegment.a.y)}) và B = (${fmt(optimalSegment.b.x)}, ${fmt(optimalSegment.b.y)}). Mọi điểm trên đoạn AB đều là nghiệm tối ưu. Giá trị tối ưu của hàm mục tiêu là ${valueText}.`;
       } else {
         conclusion = `Bài toán có vô số nghiệm tối ưu do tồn tại phương án tối ưu khác. Một nghiệm tối ưu đại diện là ${formatSolutionVector(result)}. Giá trị tối ưu của hàm mục tiêu là ${valueText}.`;
@@ -244,9 +290,11 @@ export function buildResultSummary(result: SimplexResult): ResultSummary {
   return {
     methodText: methodLabels[result.method] ?? result.method,
     statusText: statusText(result.status),
-    solutionText: solutionText(result, optimalSegment),
+    solutionText: solutionText(result, optimalSegment, optimalLine, optimalRay),
     optimalValueText: valueText,
     conclusion,
     optimalSegment,
+    optimalLine,
+    optimalRay,
   };
 }
